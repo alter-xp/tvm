@@ -57,6 +57,8 @@ class CSINNJSONSerializer : public backend::contrib::JSONSerializer {
     std::shared_ptr<JSONGraphNode> json_node;
     if (name == "csinn.conv2d") {
       json_node = CreateCompositeConvJSONNode(cn);
+    } else if (name == "csinn.dense") {
+      json_node = CreateCompositeDenseJSONNode(cn);
     } else {
       LOG(FATAL) << "Unrecognized CSINN pattern: " << name;
     }
@@ -91,6 +93,37 @@ class CSINNJSONSerializer : public backend::contrib::JSONSerializer {
     }
 
     nodes.conv = current_call;
+
+    return nodes;
+  }
+
+  /*!
+   * \brief A series of operators that form a composite
+   * convolution. Supports both nn.conv2d and qnn.conv2d.
+   */
+  struct CompositeDense {
+    const CallNode* dense = nullptr;
+    const CallNode* bias = nullptr;
+  };
+
+  /*!
+   * \brief Extract dense nodes from a composite function.
+   *
+   * \param cn The call node of the composite function.
+   * \return Extracted composite dense nodes.
+   */
+  static CompositeDense UnpackCompositeDense(const CallNode* cn) {
+    CompositeDense nodes{};
+    const auto* fn = cn->op.as<FunctionNode>();
+    ICHECK(fn);
+
+    const auto* current_call = fn->body.as<CallNode>();
+    if (backend::IsOp(current_call, "nn.bias_add")) {
+      nodes.bias = current_call;
+      current_call = current_call->args[0].as<CallNode>();
+    }
+
+    nodes.dense = current_call;
 
     return nodes;
   }
@@ -131,6 +164,27 @@ class CSINNJSONSerializer : public backend::contrib::JSONSerializer {
     return json_node;
   }
 
+  /*!
+   * \brief Create a JSON representation of a composite dense.
+   *
+   * \param cn The call to be represented.
+   * \return A JSON representation of a specific operator.
+   */
+  std::shared_ptr<JSONGraphNode> CreateCompositeDenseJSONNode(const CallNode* cn) {
+    CompositeDense nodes = UnpackCompositeDense(cn);
+
+    std::string name = "csinn.dense";
+    // Inputs must be added in the same order they appear in the relay graph.
+    std::vector<JSONGraphNodeEntry> inputs;
+    inputs.push_back(VisitExpr(cn->args[0])[0]);
+    inputs.push_back(VisitExpr(nodes.dense->args[1])[0]);
+    inputs.push_back(VisitExpr(nodes.bias->args[1])[0]);
+
+    auto json_node = std::make_shared<JSONGraphNode>(name, "kernel", inputs, 1);
+    SetCallNodeAttribute(json_node, nodes.dense);
+
+    return json_node;
+  }
 };
 
 /*!

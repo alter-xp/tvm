@@ -143,6 +143,18 @@ class CSINNJSONRuntime : public JSONRuntimeBase {
           conv2d(nid, true);
         } else if ("csinn.depthwise_conv2d" == op_name) {
           depthwise_conv2d(nid, true);
+        } else if ("nn.dense" == op_name) {
+          dense(nid);
+        } else if ("csinn.dense" == op_name) {
+          dense(nid, true);
+        } else if ("nn.relu" == op_name) {
+          relu(nid);
+        } else if ("nn.max_pool2d" == op_name) {
+          maxpool(nid);
+        } else if ("nn.avg_pool2d" == op_name) {
+          avgpool(nid);
+        } else if ("nn.softmax" == op_name) {
+          softmax(nid);
         } else {
           LOG(FATAL) << "Unsupported op: " << op_name;
         }
@@ -296,6 +308,237 @@ class CSINNJSONRuntime : public JSONRuntimeBase {
 
     csi_conv2d_init(input, output, kernel, bias, params);
     csi_conv2d(input, output, kernel, bias, params);
+  }
+
+  void dense(const size_t& nid, const bool has_bias = false) {
+    auto node = nodes_[nid];
+
+    struct fc_params* params =
+        static_cast<struct fc_params*>(csi_alloc_params(sizeof(struct fc_params), sess));
+    auto data_entry = node.GetInputs()[0];
+    auto weight_entry = node.GetInputs()[1];
+    struct csi_tensor* input = BindCSINNTensor(data_entry);
+    struct csi_tensor* kernel = BindCSINNTensor(weight_entry);
+
+    auto input_shape = nodes_[data_entry.id_].GetOpShape()[data_entry.index_];
+    auto weight_shape = nodes_[weight_entry.id_].GetOpShape()[weight_entry.index_];
+
+    input->dim_count = input_shape.size();
+    input->dim[0] = input_shape[0];
+    input->dim[1] = input_shape[1];
+    input->dim[2] = input_shape[2];
+    input->dim[3] = input_shape[3];
+    input->layout = CSINN_LAYOUT_NCHW;
+    kernel->dim_count = weight_shape.size();
+    kernel->dim[0] = weight_shape[0];
+    kernel->dim[1] = weight_shape[1];
+    kernel->dim[2] = weight_shape[2];
+    kernel->dim[3] = weight_shape[3];
+    kernel->is_const = 1;
+    kernel->layout = CSINN_LAYOUT_OIHW;
+    std::string name = "dense_" + std::to_string(layer_index++);
+    params->base.name = const_cast<char*>(name.c_str());
+
+    struct csi_tensor* bias = NULL;
+    if (has_bias) {
+      auto bias_entry = node.GetInputs()[2];
+      auto bias_shape = nodes_[bias_entry.id_].GetOpShape()[bias_entry.index_];
+      bias = BindCSINNTensor(bias_entry);
+      bias->dim_count = bias_shape.size();
+      bias->dim[0] = bias_shape[0];
+      bias->is_const = 1;
+    } else {
+      bias = csi_alloc_tensor(sess);
+      bias->dim_count = 0;
+      bias->dim[0] = 0;
+      bias->is_const = 1;
+    }
+
+    JSONGraphNodeEntry out_entry(nid, 0);
+    struct csi_tensor* output = BindCSINNTensor(out_entry);
+    auto output_shape = node.GetOpShape()[0];
+    output->dim_count = output_shape.size();
+    output->dim[0] = output_shape[0];
+    output->dim[1] = output_shape[1];
+    output->dim[2] = output_shape[2];
+    output->dim[3] = output_shape[3];
+    output->layout = CSINN_LAYOUT_NCHW;
+
+    csi_fullyconnected_init(input, output, kernel, bias, params);
+    csi_fullyconnected(input, output, kernel, bias, params);
+  }
+
+  void maxpool(const size_t& nid) {
+    auto node = nodes_[nid];
+
+    struct pool_params* params =
+        static_cast<struct pool_params*>(csi_alloc_params(sizeof(struct pool_params), sess));
+    auto data_entry = node.GetInputs()[0];
+    struct csi_tensor* input = BindCSINNTensor(data_entry);
+
+    auto input_shape = nodes_[data_entry.id_].GetOpShape()[data_entry.index_];
+    std::vector<std::string> strides = node.GetAttr<std::vector<std::string>>("strides");
+    std::vector<std::string> padding = node.GetAttr<std::vector<std::string>>("padding");
+    std::vector<std::string> attr_pool_size = node.GetAttr<std::vector<std::string>>("pool_size");
+    bool ceil_mode = std::stoi(node.GetAttr<std::vector<std::string>>("ceil_mode")[0]);
+
+    input->dim_count = input_shape.size();
+    input->dim[0] = input_shape[0];
+    input->dim[1] = input_shape[1];
+    input->dim[2] = input_shape[2];
+    input->dim[3] = input_shape[3];
+    input->layout = CSINN_LAYOUT_NCHW;
+
+    params->stride_height = std::stoi(strides[0]);
+    params->stride_width = std::stoi(strides[1]);
+    params->pad_top = std::stoi(padding[0]);
+    params->pad_left = std::stoi(padding[1]);
+    params->pad_down = std::stoi(padding[2]);
+    params->pad_right = std::stoi(padding[3]);
+    params->filter_height = std::stoi(attr_pool_size[0]);
+    params->filter_width = std::stoi(attr_pool_size[1]);
+    params->ceil_mode = ceil_mode;
+    bool count_include_pad = false;
+    if (node.HasAttr("count_include_pad")) {
+      count_include_pad = std::stoi(node.GetAttr<std::vector<std::string>>("count_include_pad")[0]);
+    }
+    params->count_include_pad = count_include_pad;
+    std::string name = "maxpool_" + std::to_string(layer_index++);
+    params->base.name = const_cast<char*>(name.c_str());
+
+    JSONGraphNodeEntry out_entry(nid, 0);
+    struct csi_tensor* output = BindCSINNTensor(out_entry);
+    auto output_shape = node.GetOpShape()[0];
+    output->dim_count = output_shape.size();
+    output->dim[0] = output_shape[0];
+    output->dim[1] = output_shape[1];
+    output->dim[2] = output_shape[2];
+    output->dim[3] = output_shape[3];
+    output->layout = CSINN_LAYOUT_NCHW;
+
+    csi_maxpool2d_init(input, output, params);
+    csi_maxpool2d(input, output, params);
+  }
+
+  void avgpool(const size_t& nid) {
+    auto node = nodes_[nid];
+
+    struct pool_params* params =
+        static_cast<struct pool_params*>(csi_alloc_params(sizeof(struct pool_params), sess));
+    auto data_entry = node.GetInputs()[0];
+    struct csi_tensor* input = BindCSINNTensor(data_entry);
+
+    auto input_shape = nodes_[data_entry.id_].GetOpShape()[data_entry.index_];
+    std::vector<std::string> strides = node.GetAttr<std::vector<std::string>>("strides");
+    std::vector<std::string> padding = node.GetAttr<std::vector<std::string>>("padding");
+    std::vector<std::string> attr_pool_size = node.GetAttr<std::vector<std::string>>("pool_size");
+    bool ceil_mode = std::stoi(node.GetAttr<std::vector<std::string>>("ceil_mode")[0]);
+
+    input->dim_count = input_shape.size();
+    input->dim[0] = input_shape[0];
+    input->dim[1] = input_shape[1];
+    input->dim[2] = input_shape[2];
+    input->dim[3] = input_shape[3];
+    input->layout = CSINN_LAYOUT_NCHW;
+
+    params->stride_height = std::stoi(strides[0]);
+    params->stride_width = std::stoi(strides[1]);
+    params->pad_top = std::stoi(padding[0]);
+    params->pad_left = std::stoi(padding[1]);
+    params->pad_down = std::stoi(padding[2]);
+    params->pad_right = std::stoi(padding[3]);
+    params->filter_height = std::stoi(attr_pool_size[0]);
+    params->filter_width = std::stoi(attr_pool_size[1]);
+    params->ceil_mode = ceil_mode;
+    bool count_include_pad = false;
+    if (node.HasAttr("count_include_pad")) {
+      count_include_pad = std::stoi(node.GetAttr<std::vector<std::string>>("count_include_pad")[0]);
+    }
+    params->count_include_pad = count_include_pad;
+    std::string name = "avgpool_" + std::to_string(layer_index++);
+    params->base.name = const_cast<char*>(name.c_str());
+
+    JSONGraphNodeEntry out_entry(nid, 0);
+    struct csi_tensor* output = BindCSINNTensor(out_entry);
+    auto output_shape = node.GetOpShape()[0];
+    output->dim_count = output_shape.size();
+    output->dim[0] = output_shape[0];
+    output->dim[1] = output_shape[1];
+    output->dim[2] = output_shape[2];
+    output->dim[3] = output_shape[3];
+    output->layout = CSINN_LAYOUT_NCHW;
+
+    csi_avgpool2d_init(input, output, params);
+    csi_avgpool2d(input, output, params);
+  }
+
+  void relu(const size_t& nid) {
+    auto node = nodes_[nid];
+
+    struct relu_params* params =
+        static_cast<struct relu_params*>(csi_alloc_params(sizeof(struct relu_params), sess));
+    auto data_entry = node.GetInputs()[0];
+    struct csi_tensor* input = BindCSINNTensor(data_entry);
+
+    auto input_shape = nodes_[data_entry.id_].GetOpShape()[data_entry.index_];
+
+    input->dim_count = input_shape.size();
+    input->dim[0] = input_shape[0];
+    input->dim[1] = input_shape[1];
+    input->dim[2] = input_shape[2];
+    input->dim[3] = input_shape[3];
+    input->layout = CSINN_LAYOUT_NCHW;
+
+    std::string name = "relu_" + std::to_string(layer_index++);
+    params->base.name = const_cast<char*>(name.c_str());
+
+    JSONGraphNodeEntry out_entry(nid, 0);
+    struct csi_tensor* output = BindCSINNTensor(out_entry);
+    auto output_shape = node.GetOpShape()[0];
+    output->dim_count = output_shape.size();
+    output->dim[0] = output_shape[0];
+    output->dim[1] = output_shape[1];
+    output->dim[2] = output_shape[2];
+    output->dim[3] = output_shape[3];
+    output->layout = CSINN_LAYOUT_NCHW;
+
+    csi_relu_init(input, output, params);
+    csi_relu(input, output, params);
+  }
+
+  void softmax(const size_t& nid) {
+    auto node = nodes_[nid];
+
+    struct softmax_params* params =
+        static_cast<struct softmax_params*>(csi_alloc_params(sizeof(struct softmax_params), sess));
+    auto data_entry = node.GetInputs()[0];
+    auto axis = std::stoi(node.GetAttr<std::vector<std::string>>("axis")[0]);
+    params->axis = axis;
+    std::string name = "softmax_" + std::to_string(layer_index++);
+    params->base.name = const_cast<char*>(name.c_str());
+    struct csi_tensor* input = BindCSINNTensor(data_entry);
+
+    auto input_shape = nodes_[data_entry.id_].GetOpShape()[data_entry.index_];
+
+    input->dim_count = input_shape.size();
+    input->dim[0] = input_shape[0];
+    input->dim[1] = input_shape[1];
+    input->dim[2] = input_shape[2];
+    input->dim[3] = input_shape[3];
+    input->layout = CSINN_LAYOUT_NCHW;
+
+    JSONGraphNodeEntry out_entry(nid, 0);
+    struct csi_tensor* output = BindCSINNTensor(out_entry);
+    auto output_shape = node.GetOpShape()[0];
+    output->dim_count = output_shape.size();
+    output->dim[0] = output_shape[0];
+    output->dim[1] = output_shape[1];
+    output->dim[2] = output_shape[2];
+    output->dim[3] = output_shape[3];
+    output->layout = CSINN_LAYOUT_NCHW;
+
+    csi_softmax_init(input, output, params);
+    csi_softmax(input, output, params);
   }
 
   /* The network layers that are represented in csinn primitives. */
