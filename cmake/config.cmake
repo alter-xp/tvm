@@ -377,3 +377,18 @@ set(SUMMARIZE OFF)
 # To enable pass the path to the root libtorch (or PyTorch) directory
 # OFF or /path/to/torch/
 set(USE_LIBTORCH OFF)
+
+# Whether to build with CSI-NN2 codegen support
+# Possible values:
+# - OFF: disable csinn runtime support
+# - ON: add support for compiling CSINN2 codegen.
+# - path/to/CSI-NN2: use a specific version of the
+#   CSI-nn2 compute library
+set(USE_CSINN OFF)
+
+# Whether to build with csinn runtime for device
+# Possible values:
+# - OFF: disable csinn runtime support
+# - X86: compiling CSINN2 runtime for x86 device.
+# - C906: cross-compiling CSINN2 runtime for C906 device.
+set(USE_CSINN_DEVICE_RUNTIME OFF)

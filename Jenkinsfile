@@ -613,6 +613,42 @@ stage('Build') {
       Utils.markStageSkippedForConditional('BUILD: QEMU')
     }
   },
+  'BUILD: CSINN1': {
+    if (!skip_ci && is_docs_only_build != 1) {
+      node('CPU') {
+        ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/build-rv") {
+          init_git()
+          sh (
+            script: "${docker_run} ${ci_qemu} ./tests/scripts/task_config_build_c906.sh build",
+            label: 'Create C906 cmake config',
+          )
+          make(ci_qemu, 'build', '-j2')
+          pack_lib('qemu', tvm_lib)
+          pack_microtvm_template_projects('qemu')
+        }
+      }
+     } else {
+      Utils.markStageSkippedForConditional('BUILD: QEMU')
+    }
+  },
+  'BUILD: CSINN2': {
+    if (!skip_ci && is_docs_only_build != 1) {
+      node('CPU') {
+        ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/build-csinn") {
+          init_git()
+          sh (
+            script: "${docker_run} ${ci_qemu} ./tests/scripts/task_config_build_csinn2.sh build",
+            label: 'Create CSI-NN2 cmake config',
+          )
+          make(ci_qemu, 'build', '-j2')
+          pack_lib('qemu', tvm_lib)
+          pack_microtvm_template_projects('qemu')
+        }
+      }
+     } else {
+      Utils.markStageSkippedForConditional('BUILD: QEMU')
+    }
+  },
   'BUILD: Hexagon': {
     if (!skip_ci && is_docs_only_build != 1) {
       node('CPU') {
@@ -1016,6 +1052,33 @@ stage('Test') {
                 sh (
                   script: "${docker_run} ${ci_qemu} ./tests/scripts/task_demo_microtvm.sh",
                   label: 'Run microTVM demos',
+                )
+              })
+            } finally {
+              junit 'build/pytest-results/*.xml'
+            }
+          }
+        }
+      }
+    } else {
+      Utils.markStageSkippedForConditional('test: QEMU')
+    }
+  },
+  'test: CSINN2': {
+    if (!skip_ci && is_docs_only_build != 1) {
+      node('CPU') {
+        ws("workspace/exec_${env.EXECUTOR_NUMBER}/tvm/test-qemu") {
+          timeout(time: max_time, unit: 'MINUTES') {
+            try {
+              init_git()
+              withEnv(['PLATFORM=qemu'], {
+                unpack_lib('qemu', tvm_lib)
+                unpack_microtvm_template_projects('qemu')
+                ci_setup(ci_qemu)
+                cpp_unittest(ci_qemu)
+                sh (
+                  script: "${docker_run} ${ci_qemu} ./tests/scripts/task_python_csinn.sh",
+                  label: 'Run microTVM tests',
                 )
               })
             } finally {
