@@ -32,4 +32,4 @@ export PATH=/opt/csi-nn2/tools/qemu/bin:$PATH
 nohup qemu-riscv64 -cpu c906fdv -L /opt/csi-nn2/tools/gcc-toolchain//sysroot/ ./build-rv/tvm_rpc server --host=127.0.0.1 --port=9090 &
 
 # test
-# run_pytest ctypes python-csinn2_compute_lib tests/python/contrib/test_csinn
+run_pytest ctypes python-csinn2_compute_lib tests/python/contrib/test_csinn
